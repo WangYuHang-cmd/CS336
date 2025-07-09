@@ -7,24 +7,7 @@ from array import array
 import heapq
 from collections import defaultdict, Counter
 from functools import total_ordering
-
-
-class PairEntry:
-    __slots__ = ("freq", "a", "b")  # 节省内存
-
-    def __init__(self, freq: int, a: bytes, b: bytes):
-        self.freq = freq  #  正数 频次
-        self.a = a  #  bytes
-        self.b = b
-
-    # heapq 只用到 < 比较，返回 True 表示 “self 的优先级更高”
-    def __lt__(self, other: "PairEntry") -> bool:
-        if self.freq != other.freq:
-            return self.freq > other.freq  # 频率更大 → 先出
-        if self.a != other.a:
-            return self.a > other.a  # token1 字典序更大 → 先出
-        return self.b > other.b  # token2 字典序更大 → 先出
-
+import json
 
 GPT2_SPLIT_PATTERN = (
     r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
@@ -102,7 +85,7 @@ class BPETokenizer:
         return new_ids_group
 
 
-    def fast_train(self, path: str | os.PathLike):
+    def train(self, path: str | os.PathLike):
         """使用自定义类实现大根堆的 BPE 训练"""
         
         class PairItem:
@@ -179,7 +162,6 @@ class BPETokenizer:
                     pos[token_pair] = set()
                 pos[token_pair].add(idx)
 
-        # 使用自定义类构建堆
         heap = []
         for (a, b), cnt in pair_counts.items():
             item = PairItem(cnt, a, b, self.itos)
@@ -267,7 +249,7 @@ class BPETokenizer:
         self.pair2new = {(p1, p2): self.stoi[p1 + p2] for (p1, p2) in self.merges}
 
 
-    def train(self, path: str | os.PathLike):
+    def fast_train(self, path: str | os.PathLike):
         def bytes_desc(b):
             return bytes(255 - x for x in b)
 
@@ -424,7 +406,6 @@ class BPETokenizer:
         else:
             text_parts = [text]
 
-        # Pre-Tokenizer
         initial_vocab_map = {v: k for k, v in self.itos.items()}
         token_groups = []
         for part in text_parts:
@@ -434,21 +415,17 @@ class BPETokenizer:
             for word in words_in_bytes:
                 token_groups.append([initial_vocab_map[bytes([b])] for b in word])
 
-        # BPE Merge
         num_merges_needed = self.vocab_size - len(self.stoi)
         for i in range(num_merges_needed):
             pair_counts = self._get_stats(token_groups)
             if not pair_counts:
                 break
 
-            # a. 【关键】找到频率最高的对，使用与参考实现一致的平局决胜规则
-            # 规则：1. 按频率降序; 2. 按第一个token的解码字符串降序; 3. 按第二个token的解码字符串降序
             best_pair = max(
                 pair_counts,
                 key=lambda p: (pair_counts[p], self.itos[p[0]], self.itos[p[1]]),
             )
 
-            # b. Nwe token
             new_token_id = len(self.itos)
             p1_bytes, p2_bytes = self.itos[best_pair[0]], self.itos[best_pair[1]]
             new_token_bytes = p1_bytes + p2_bytes
@@ -457,7 +434,6 @@ class BPETokenizer:
             self.stoi[new_token_bytes] = new_token_id
             self.itos[new_token_id] = new_token_bytes
 
-            # c. Rebuld vocab
             token_groups = self._merge_pair_in_groups(
                 token_groups, best_pair, new_token_id
             )
@@ -469,8 +445,6 @@ class BPETokenizer:
     def _get_pairs(self, tokens: list[bytes]) -> set[tuple[bytes, bytes]]:
         """Help encode"""
         return set(zip(tokens, tokens[1:]))
-
-    from array import array
 
     def _encode_ordinary_text(self, text_bytes: bytes) -> list[int]:
         """BPE encode (不含特殊 token) —— 无额外列表 / O(n) 内存"""
@@ -496,13 +470,13 @@ class BPETokenizer:
 
             # b. 就地合并：最经典 “greedy smallest-rank merge until稳定”
             while True:
-                best_rank = 1_000_000_000
+                best_rank = 1000000000
                 best_pos = -1
                 # ——— 找当前序列里 rank 最小的 pair ———
                 for i in range(len(token_ids) - 1):
                     r = pair_rank.get(
                         (self.itos[token_ids[i]], self.itos[token_ids[i + 1]]),
-                        1_000_000_000,
+                        1000000000,
                     )
                     if r < best_rank:
                         best_rank, best_pos = r, i
@@ -573,7 +547,6 @@ class BPETokenizer:
         instance.merges_rank = {pair: i for i, pair in enumerate(merges)}
         instance.vocab = vocab
 
-        # ★ 重新构建 fast-lookup 映射 ★
         instance.pair2new = {(p1, p2): instance.stoi[p1 + p2] for (p1, p2) in merges}
 
         return instance
