@@ -10,6 +10,9 @@ def softmax(x: Float[Tensor, "..."], dim: int = -1) -> Float[Tensor, "..."]:
     if dim < 0:
         dim += x.ndim
 
+    in_type = x.dtype
+    x = x.to(torch.float64)
+    
     perm = list(range(x.ndim))
     perm[dim], perm[-1] = perm[-1], perm[dim]
     x_moved = x.permute(*perm)
@@ -17,12 +20,10 @@ def softmax(x: Float[Tensor, "..."], dim: int = -1) -> Float[Tensor, "..."]:
     x_max = reduce(x_moved, "... n -> ... 1", "max")
     x_exp = (x_moved - x_max).exp()
 
-    ones = torch.ones_like(x_exp)
-    x_enom = reduce(x_exp, "... n -> ... 1", "sum") 
+    x_enom = reduce(x_exp, "... n -> ... 1", "sum")
 
     out_moved = x_exp / x_enom
 
     out = out_moved.permute(*perm)
-    return out
-
-
+    
+    return out.to(in_type)

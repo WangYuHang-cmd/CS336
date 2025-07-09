@@ -44,42 +44,15 @@ class RoPE(nn.Module):
         # cos/sin tensor build
         cos = self.cos_cached[token_positions]
         sin = self.sin_cached[token_positions]
-        rot_mat = torch.stack(
-            (
-                torch.stack((cos, -sin), dim = -1),
-                torch.stack((sin, cos), dim = -1),
-            ),
-            dim = -2,
-        )
         
-        # rotate "i j, j -> i"
-        x_rot = einsum(rot_mat, x_pair, "... d_pair i j, ... d_pair j -> ... d_pair i")
-        out = rearrange(x_rot, "... seq_len d_pair two -> ... seq_len (d_pair two)", two = 2)
+        cos = rearrange(cos, "... s d -> ... 1 s d")
+        sin = rearrange(sin, "... s d -> ... 1 s d")
         
-        return  out.to(in_type)
+        x1, x2 = x_pair.unbind(dim=-1)
+        rot1 = x1 * cos - x2 * sin
+        rot2 = x1 * sin + x2 * cos
+        x_rot = torch.stack((rot1, rot2), dim = -1)
         
-
-
-    # def forward(
-    #     self,
-    #     x: Float[Tensor, "... seq_len d_k"],
-    #     token_positions: Int[Tensor, "... seq_len"],
-    # ) -> Float[Tensor, "...  seq_len d_k"]:
+        out = rearrange(x_rot, "... s d two -> ... s (d two)", two=2)
         
-    #     assert x.shape[-1] == self.d_k, f"x's last dim {x.shape[-1]} != d_k {self.d_k}"
-    #     assert self.d_k % 2 == 0, "d_k must be even for RoPE"
-        
-    #     in_type = x.dtype
-    #     x = x.to(torch.float32)
-
-    #     x_even = x[..., 0::2]            # (..., seq_len, d_k/2)
-    #     x_odd  = x[..., 1::2]
-
-    #     cos = self.cos_cached[token_positions]  # [..., seq_len half_dim]
-    #     sin = self.sin_cached[token_positions]
-
-    #     rot_even = x_even * cos - x_odd * sin
-    #     rot_odd = x_odd * cos + x_even * sin
-
-    #     out = torch.stack((rot_even, rot_odd), dim=-1).flatten(-2)
-    #     return out.to(in_type)
+        return out.to(in_type)
